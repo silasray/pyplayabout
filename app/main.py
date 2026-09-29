@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from app.api.routes import router as api_router
+from app.config_api import router as config_api_router
 from app.database import Base, engine
 
 Base.metadata.create_all(bind=engine)
@@ -22,6 +23,7 @@ def read_root():
 
 
 app.include_router(api_router)
+app.include_router(config_api_router)
 
 
 if __name__ == "__main__":

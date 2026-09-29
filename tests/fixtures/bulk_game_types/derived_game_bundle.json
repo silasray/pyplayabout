@@ -1,0 +1,19 @@
+{
+  "game_type": {"name": "dm_house_rules", "version": 1, "is_generic": false},
+  "entity_types": [{"name": "saber"}],
+  "entity_classes": [{"name": "weapon"}],
+  "entity_type_classes": [{"entity_type": "saber", "entity_class": "weapon"}],
+  "participant_types": [{"name": "defender"}],
+  "relationship_types": [{
+    "name": "defends",
+    "participant_roles": [{"participant_type": "defender", "entity_type": "saber"}]
+  }],
+  "action_types": [{"name": "parry"}],
+  "action_resolver_configs": [{
+    "name": "parry_root",
+    "resolver_key": "example_runtime_resolver",
+    "action_type": "parry",
+    "relationship_type": "root",
+    "effect_config": {"kind": "calculation", "dice_count": 1, "dice_sides": 8, "bonus": 2, "multiplier": 1}
+  }]
+}

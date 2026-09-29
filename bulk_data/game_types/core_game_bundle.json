@@ -1,0 +1,25 @@
+{
+  "game_type": {"name": "core_game", "version": 1, "is_generic": false},
+  "entity_types": [{"name": "sword"}, {"name": "orc"}],
+  "entity_classes": [{"name": "weapon"}, {"name": "creature"}],
+  "entity_type_classes": [
+    {"entity_type": "sword", "entity_class": "weapon"},
+    {"entity_type": "orc", "entity_class": "creature"}
+  ],
+  "participant_types": [{"name": "attacker"}, {"name": "target"}],
+  "relationship_types": [{
+    "name": "attacks",
+    "participant_roles": [
+      {"participant_type": "attacker", "entity_type": "orc"},
+      {"participant_type": "target", "entity_type": "sword"}
+    ]
+  }],
+  "action_types": [{"name": "slash"}],
+  "action_resolver_configs": [{
+    "name": "slash_root",
+    "resolver_key": "example_runtime_resolver",
+    "action_type": "slash",
+    "relationship_type": "root",
+    "effect_config": {"kind": "calculation", "dice_count": 2, "dice_sides": 6, "bonus": 1, "multiplier": 1}
+  }]
+}

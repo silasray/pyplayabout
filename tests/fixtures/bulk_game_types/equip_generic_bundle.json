@@ -1,0 +1,23 @@
+{
+  "game_type": {"name": "test_generic_game_type", "version": 1, "is_generic": true},
+  "entity_types": [{"name": "character"}, {"name": "sword"}, {"name": "bauble"}],
+  "entity_classes": [{"name": "weapon"}],
+  "entity_type_classes": [{"entity_type": "sword", "entity_class": "weapon"}],
+  "participant_types": [{"name": "equipper"}, {"name": "equippable"}],
+  "relationship_types": [{
+    "name": "equipped",
+    "participant_roles": [
+      {"participant_type": "equipper", "entity_type": "character"},
+      {"participant_type": "equippable", "entity_class": "weapon"},
+      {"participant_type": "equippable", "entity_type": "bauble"}
+    ]
+  }],
+  "action_types": [{"name": "equip"}],
+  "action_resolver_configs": [{
+    "name": "equip_root",
+    "resolver_key": "create_relationship",
+    "action_type": "equip",
+    "relationship_type": "root",
+    "effect_config": {"kind": "relationship", "relationship_type": "equipped"}
+  }]
+}

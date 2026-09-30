@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
@@ -427,8 +427,12 @@ def _parse_deprecated_at(deprecated_at: str) -> datetime:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"'{deprecated_at}' is not an ISO 8601 deprecated_at timestamp") from exc
 
 
+def _find_deprecated_game_type(db: Session, game_type_name: str, version: int, deprecated_at: str) -> GameType | None:
+    return db.query(GameType).filter_by(name=game_type_name, version=version, deprecated_at=_parse_deprecated_at(deprecated_at)).one_or_none()
+
+
 def _deprecated_game_type_for_request(db: Session, game_type_name: str, version: int, deprecated_at: str) -> GameType:
-    game_type = db.query(GameType).filter_by(name=game_type_name, version=version, deprecated_at=_parse_deprecated_at(deprecated_at)).one_or_none()
+    game_type = _find_deprecated_game_type(db, game_type_name, version, deprecated_at)
     if game_type is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -437,12 +441,7 @@ def _deprecated_game_type_for_request(db: Session, game_type_name: str, version:
     return game_type
 
 
-@router.get("")
-def list_game_types_endpoint(name: str | None = None, version: int | None = None, include_deprecated: bool = False, db: Session = Depends(get_db)):
-    """List game types, optionally filtered by name, or by name and version. Deprecated game types are listed only on request."""
-    if version is not None and name is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Filtering by version requires a name")
-
+def _list_game_types(db: Session, *, include_deprecated: bool, name: str | None = None, version: int | None = None) -> list[dict[str, Any]]:
     query = db.query(GameType)
     if name is not None:
         query = query.filter(GameType.name == name)
@@ -455,22 +454,45 @@ def list_game_types_endpoint(name: str | None = None, version: int | None = None
     return [_game_type_response(game_type) for game_type in query.order_by(*ordering).all()]
 
 
-@router.get("/by-id/{game_type_id}")
-def get_game_type_by_id_endpoint(game_type_id: uuid.UUID, db: Session = Depends(get_db)):
+def _reject_unknown_query_params(request: Request) -> None:
+    """Reject query parameters the route does not declare, so a mistyped or retired filter is not silently ignored."""
+    declared = {param.alias for param in request.scope["route"].dependant.query_params}
+    unknown = sorted(set(request.query_params) - declared)
+    if unknown:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown query parameter(s): {', '.join(unknown)}")
+
+
+# Every game type getter returns a list, empty when nothing matches, so include_deprecated means the same thing at
+# every level of the path. Deprecated game types are listed only on request, except where the path itself addresses them.
+
+
+@router.get("", dependencies=[Depends(_reject_unknown_query_params)])
+def list_game_types_endpoint(include_deprecated: bool = False, db: Session = Depends(get_db)):
+    return _list_game_types(db, include_deprecated=include_deprecated)
+
+
+@router.get("/by-id/{game_type_id}", dependencies=[Depends(_reject_unknown_query_params)])
+def list_game_types_by_id_endpoint(game_type_id: uuid.UUID, db: Session = Depends(get_db)):
+    """The game type with this id, deprecated or not."""
     game_type = db.get(GameType, game_type_id)
-    if game_type is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Game type {game_type_id} does not exist")
-    return _game_type_response(game_type)
+    return [_game_type_response(game_type)] if game_type is not None else []
 
 
-@router.get("/{game_type_name}/versions/{version}")
-def get_game_type_endpoint(game_type_name: str, version: int, db: Session = Depends(get_db)):
-    return _game_type_response(_game_type_for_request(db, game_type_name, version))
+@router.get("/{game_type_name}", dependencies=[Depends(_reject_unknown_query_params)])
+def list_game_types_by_name_endpoint(game_type_name: str, include_deprecated: bool = False, db: Session = Depends(get_db)):
+    return _list_game_types(db, include_deprecated=include_deprecated, name=game_type_name)
 
 
-@router.get("/{game_type_name}/versions/{version}/deprecated/{deprecated_at}")
-def get_deprecated_game_type_endpoint(game_type_name: str, version: int, deprecated_at: str, db: Session = Depends(get_db)):
-    return _game_type_response(_deprecated_game_type_for_request(db, game_type_name, version, deprecated_at))
+@router.get("/{game_type_name}/versions/{version}", dependencies=[Depends(_reject_unknown_query_params)])
+def list_game_types_by_name_and_version_endpoint(game_type_name: str, version: int, include_deprecated: bool = False, db: Session = Depends(get_db)):
+    return _list_game_types(db, include_deprecated=include_deprecated, name=game_type_name, version=version)
+
+
+@router.get("/{game_type_name}/versions/{version}/deprecated/{deprecated_at}", dependencies=[Depends(_reject_unknown_query_params)])
+def list_deprecated_game_types_endpoint(game_type_name: str, version: int, deprecated_at: str, db: Session = Depends(get_db)):
+    """The deprecated game type with this name, version and deprecated_at."""
+    game_type = _find_deprecated_game_type(db, game_type_name, version, deprecated_at)
+    return [_game_type_response(game_type)] if game_type is not None else []
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

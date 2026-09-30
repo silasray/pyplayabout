@@ -90,65 +90,60 @@ def test_deprecated_game_types_are_unique_by_name_version_and_deprecated_at():
 # Listing and addressing
 
 
-@pytest.mark.parametrize("game_types", [["core_game", "retired_game"]], indirect=True)
-def test_list_hides_deprecated_game_types_unless_requested(game_types):
-    _deprecate("retired_game")
-
-    assert [game_type["name"] for game_type in client.get("/api/v1/game-types").json()] == ["core_game"]
-    listed = {game_type["name"]: game_type for game_type in client.get("/api/v1/game-types", params={"include_deprecated": True}).json()}
-    assert set(listed) == {"core_game", "retired_game"}
-    assert listed["core_game"]["deprecated_at"] is None
-    assert listed["retired_game"]["deprecated_at"] is not None
-
-
 @pytest.mark.parametrize(
     "game_types",
     [[{"name": "core_game", "version": 1}, {"name": "core_game", "version": 2}, "other_game"]],
     indirect=True,
 )
-def test_list_filters_by_name_and_by_name_and_version(game_types, test_body_rows):
+def test_every_getter_lists_and_honors_include_deprecated(game_types, test_body_rows):
     first_deprecation = _deprecate("core_game", 1)["game_type"]
     assert client.post("/api/v1/game-types", json={"name": "core_game", "version": 1}).status_code == 201
     second_deprecation = _deprecate("core_game", 1)["game_type"]
     replacement = client.post("/api/v1/game-types", json={"name": "core_game", "version": 1}).json()
+    active_v2, other_game = game_types[1]["id"], game_types[2]["id"]
 
-    def listed(**params):
-        response = client.get("/api/v1/game-types", params=params)
+    def listed(path, **params):
+        response = client.get(f"/api/v1/game-types{path}", params=params)
         assert response.status_code == 200, response.text
-        return [(game_type["id"], game_type["version"], game_type["deprecated_at"]) for game_type in response.json()]
+        return [game_type["id"] for game_type in response.json()]
 
-    active_v2 = game_types[1]["id"]
-    assert listed(name="core_game") == [(replacement["id"], 1, None), (active_v2, 2, None)]
-    assert listed(name="core_game", include_deprecated=True) == [
-        (replacement["id"], 1, None),
-        (first_deprecation["id"], 1, first_deprecation["deprecated_at"]),
-        (second_deprecation["id"], 1, second_deprecation["deprecated_at"]),
-        (active_v2, 2, None),
-    ]
-    assert listed(name="core_game", version=1) == [(replacement["id"], 1, None)]
-    assert [entry[0] for entry in listed(name="core_game", version=1, include_deprecated=True)] == [
-        replacement["id"],
-        first_deprecation["id"],
-        second_deprecation["id"],
-    ]
-    assert listed(name="missing_game", include_deprecated=True) == []
-    assert client.get("/api/v1/game-types", params={"version": 1}).status_code == 400
+    deprecated_v1 = [first_deprecation["id"], second_deprecation["id"]]
+    assert listed("") == [replacement["id"], active_v2, other_game]
+    assert listed("", include_deprecated=True) == [replacement["id"], *deprecated_v1, active_v2, other_game]
+    assert listed("/core_game") == [replacement["id"], active_v2]
+    assert listed("/core_game", include_deprecated=True) == [replacement["id"], *deprecated_v1, active_v2]
+    assert listed("/core_game/versions/1") == [replacement["id"]]
+    assert listed("/core_game/versions/1", include_deprecated=True) == [replacement["id"], *deprecated_v1]
+    assert listed(f"/core_game/versions/1/deprecated/{second_deprecation['deprecated_at']}") == [second_deprecation["id"]]
+    assert listed(f"/by-id/{first_deprecation['id']}") == [first_deprecation["id"]]
+
+    # No match is an empty list, not an error.
+    assert listed("/missing_game", include_deprecated=True) == []
+    assert listed("/core_game/versions/3") == []
+    assert listed(f"/by-id/{uuid.uuid4()}") == []
+
+    # Filters now live in the path, so the old query filters are rejected rather than silently ignored.
+    for path, param in [("", "name"), ("", "version"), ("/core_game", "include_deprecatd")]:
+        response = client.get(f"/api/v1/game-types{path}", params={param: 1})
+        assert response.status_code == 400, response.text
+        assert response.json()["detail"] == f"Unknown query parameter(s): {param}"
 
 
 @pytest.mark.parametrize("game_types", [["core_game"]], indirect=True)
-def test_deprecated_game_type_is_addressable_by_id_and_by_deprecated_at_but_not_by_name_alone(game_types, test_body_rows):
+def test_deprecated_game_type_is_listed_by_name_only_on_request_and_always_by_id_or_deprecated_at(game_types, test_body_rows):
     deprecated = _deprecate("core_game")["game_type"]
 
-    assert client.get(_path("core_game")).status_code == 404
-    assert client.get(f"/api/v1/game-types/by-id/{deprecated['id']}").json() == deprecated
-    assert client.get(_path("core_game", deprecated_at=deprecated["deprecated_at"])).json() == deprecated
+    assert client.get(_path("core_game")).json() == []
+    assert client.get(_path("core_game"), params={"include_deprecated": True}).json() == [deprecated]
+    assert client.get(f"/api/v1/game-types/by-id/{deprecated['id']}").json() == [deprecated]
+    assert client.get(_path("core_game", deprecated_at=deprecated["deprecated_at"])).json() == [deprecated]
     assert client.get(_path("core_game", deprecated_at="not-a-timestamp")).status_code == 400
 
     # The name and version are free again for a new active game type.
     replacement = client.post("/api/v1/game-types", json={"name": "core_game", "version": 1})
     assert replacement.status_code == 201
     assert replacement.json()["id"] != deprecated["id"]
-    assert client.get(_path("core_game")).json()["id"] == replacement.json()["id"]
+    assert [game_type["id"] for game_type in client.get(_path("core_game")).json()] == [replacement.json()["id"]]
 
 
 # Deprecation prompts derived game types to rebase
@@ -170,7 +165,7 @@ def test_deprecating_an_ancestor_queues_a_rebase_change_for_derived_game_types(g
         assert snapshot["ancestor"]["deprecated_at"] == result["game_type"]["deprecated_at"]
 
     # A derived game type still links its deprecated ancestor, and returns it in full.
-    derived = client.get(_path("dm_house_rules")).json()
+    [derived] = client.get(_path("dm_house_rules")).json()
     assert derived["derived_from"] == result["game_type"]
 
 
@@ -184,7 +179,7 @@ def test_delete_game_type_with_nothing_referencing_it_deletes_it():
 
     assert response.status_code == 200
     assert response.json()["status"] == "deleted"
-    assert client.get(f"/api/v1/game-types/by-id/{created['id']}").status_code == 404
+    assert client.get(f"/api/v1/game-types/by-id/{created['id']}").json() == []
 
 
 @pytest.mark.parametrize("game_types", [["core_game"]], indirect=True)

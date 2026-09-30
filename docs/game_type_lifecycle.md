@@ -28,15 +28,15 @@ Deprecating a game type keeps its row and all of its config, so history records 
 
 ### Visibility rules
 
-Deprecated game types are hidden by default and only appear when explicitly asked for or when something links to them:
+Deprecated game types are hidden by default and only appear when explicitly asked for or when something links to them. Every game type getter returns a list, empty when nothing matches, so the `include_deprecated` flag means the same thing at every level of the path. Filters live in the path; a getter rejects any query parameter it does not declare with a 400.
 
 | Context | Deprecated game types |
 |---|---|
-| Lookups by name and version (`/game-types/{name}/versions/{version}/...`), including every config endpoint | never matched |
-| `GET /game-types`, optionally filtered with `?name=` or `?name=&version=` | excluded unless `?include_deprecated=true` |
+| `GET /game-types`, `GET /game-types/{name}`, `GET /game-types/{name}/versions/{version}` | excluded unless `?include_deprecated=true` |
+| `GET /game-types/{name}/versions/{version}/deprecated/{deprecated_at}` | listed; `deprecated_at` is the ISO 8601 value from the game type's representation |
+| `GET /game-types/by-id/{id}` | listed |
 | A resource that links to a game type (e.g. a derived game type's `derived_from`) | always returned in full |
-| `GET /game-types/by-id/{id}` | returned |
-| `/game-types/{name}/versions/{version}/deprecated/{deprecated_at}` | returned; `deprecated_at` is the ISO 8601 value from the game type's representation |
+| Every other endpoint addressed by name and version (deprecate, delete, and all config endpoints) | never matched |
 
 When a GraphQL interface is added, it should mirror this: resolve by UUID as an alternate path, accept `deprecated_at` to address a deprecated game type, and take an explicit flag to include deprecated game types in collection queries.
 

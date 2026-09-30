@@ -85,10 +85,10 @@ def game_types(request):
         failures = []
         for game_type in reversed(created):
             # A test may have deleted the game type itself, or deprecated it, which changes the address it is deleted through.
-            lookup = client.get(f"/api/v1/game-types/by-id/{game_type['id']}")
-            if lookup.status_code == 404:
+            matches = client.get(f"/api/v1/game-types/by-id/{game_type['id']}").json()
+            if not matches:
                 continue
-            current = lookup.json()
+            [current] = matches
             path = f"/api/v1/game-types/{current['name']}/versions/{current['version']}"
             if current["deprecated_at"] is not None:
                 path += f"/deprecated/{current['deprecated_at']}"

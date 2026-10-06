@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.database import Base, SessionLocal, engine
+from app.database import SessionLocal
 from app.models import (
     Entity,
     EntityClass,
@@ -14,14 +14,6 @@ from app.models import (
     RelationshipType,
     RelationshipTypeParticipantType,
 )
-
-
-@pytest.fixture(autouse=True)
-def reset_db():
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
-    yield
-    Base.metadata.drop_all(bind=engine)
 
 
 def test_entity_model_exists_and_maps_to_entity_table():

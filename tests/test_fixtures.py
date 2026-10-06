@@ -77,3 +77,41 @@ def test_bulk_bundles_populate_only_their_own_game_types_among_many(game_types, 
     }
     assert ("action_resolver_config", "parry_root") in pending_reviews
 
+
+@pytest.mark.parametrize(
+    "game_type_specs",
+    [
+        [GameTypeSpec(name="core_game", version=1)],
+        [GameTypeSpec(name="weapons", version=1, is_generic=True)],
+        [
+            GameTypeSpec(name="weapons", version=1, is_generic=True),
+            GameTypeSpec(name="core_game", version=1),
+            GameTypeSpec(name="dm_house_rules", version=1, derived_from=GameTypeSpec(name="core_game", version=1)),
+            GameTypeSpec(name="table_two_rules", version=1, derived_from=GameTypeSpec(name="core_game", version=1)),
+        ],
+        [
+            GameTypeSpec(name="core_game", version=1),
+            GameTypeSpec(name="core_game", version=2),
+            GameTypeSpec(name="dm_house_rules", version=1, derived_from=GameTypeSpec(name="core_game", version=2)),
+        ],
+    ],
+    indirect=True,
+)
+def test_game_types_fixture_creates_requested_game_types(game_type_specs, game_types):
+    assert len(game_types) == len(game_type_specs)
+
+    for spec, game_type in zip(game_type_specs, game_types):
+        assert game_type.signature == spec.signature
+        assert game_type.is_generic == spec.get("is_generic", False)
+
+        if spec.parent is None:
+            assert game_type.derived_from is None
+        else:
+            assert game_type.derived_from.signature == spec.parent.signature
+            assert game_type.derived_from in game_types
+
+
+def test_game_types_fixture_defaults_to_single_non_generic_game_type(game_types):
+    assert len(game_types) == 1
+    assert game_types[0].is_generic is False
+    assert game_types[0].derived_from is None

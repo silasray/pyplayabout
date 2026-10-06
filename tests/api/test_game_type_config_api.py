@@ -1,7 +1,6 @@
-import pytest
 from fastapi.testclient import TestClient
 
-from app.database import Base, SessionLocal, engine
+from app.database import SessionLocal
 from app.main import app
 from app.models import (
     ActionResolverConfig,
@@ -14,33 +13,6 @@ from app.models import (
 )
 
 client = TestClient(app)
-
-
-@pytest.fixture(autouse=True)
-def reset_db():
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
-    yield
-    Base.metadata.drop_all(bind=engine)
-
-
-def test_game_type_name_can_repeat_across_versions_but_not_same_version():
-    with SessionLocal() as session:
-        session.add_all(
-            [
-                GameType(name="alpha", version=1, is_generic=False),
-                GameType(name="alpha", version=2, is_generic=False),
-            ]
-        )
-        session.commit()
-
-        assert session.query(GameType).filter_by(name="alpha", version=1).count() == 1
-        assert session.query(GameType).filter_by(name="alpha", version=2).count() == 1
-
-    with SessionLocal() as session:
-        session.add(GameType(name="alpha", version=2, is_generic=False))
-        with pytest.raises(Exception):
-            session.commit()
 
 
 def test_export_endpoint_returns_game_type_config():

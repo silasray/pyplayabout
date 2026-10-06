@@ -1,9 +1,7 @@
 import uuid
 
-import pytest
-
 from app.config_import_export import export_game_type_config, import_game_type_config
-from app.database import Base, SessionLocal, engine
+from app.database import SessionLocal
 from app.models import (
     ActionResolverConfig,
     ActionType,
@@ -16,14 +14,6 @@ from app.models import (
     RelationshipType,
     RelationshipTypeParticipantType,
 )
-
-
-@pytest.fixture(autouse=True)
-def reset_db():
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
-    yield
-    Base.metadata.drop_all(bind=engine)
 
 
 def test_game_type_config_export_includes_only_game_specific_schema():

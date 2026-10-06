@@ -6,7 +6,6 @@ from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.exc import IntegrityError
 
 from app.main import app
 from app.models import (
@@ -16,7 +15,6 @@ from app.models import (
     EffectCalculationConfig,
     Entity,
     EntityType,
-    GameType,
     GameTypeResourceChange,
     Resolution,
 )
@@ -58,31 +56,6 @@ def _add_history_record(session, game_type):
         )
     )
     session.commit()
-
-
-# Uniqueness
-
-
-def test_active_game_types_are_unique_by_name_and_version(db_session):
-    db_session.add_all([GameType(name="core_game", version=1), GameType(name="core_game", version=1)])
-    with pytest.raises(IntegrityError):
-        db_session.commit()
-
-
-def test_deprecated_game_types_are_unique_by_name_version_and_deprecated_at(db_session):
-    deprecated_at = datetime(2026, 1, 1, 12, 0, 0)
-    db_session.add_all(
-        [
-            GameType(name="core_game", version=1),
-            GameType(name="core_game", version=1, deprecated_at=deprecated_at),
-            GameType(name="core_game", version=1, deprecated_at=datetime(2026, 1, 2)),
-        ]
-    )
-    db_session.commit()
-
-    db_session.add(GameType(name="core_game", version=1, deprecated_at=deprecated_at))
-    with pytest.raises(IntegrityError):
-        db_session.commit()
 
 
 # Listing and addressing

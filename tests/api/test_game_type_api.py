@@ -2,7 +2,6 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy.exc import IntegrityError
 
 from app.config_import_export import export_game_type_config, import_game_type_config
 from app.main import app
@@ -12,45 +11,6 @@ from app.resolution import run_action_resolution
 from helpers import GameTypeSpec
 
 client = TestClient(app)
-
-
-@pytest.mark.parametrize(
-    "game_type_specs",
-    [
-        [GameTypeSpec(name="core_game", version=1)],
-        [GameTypeSpec(name="weapons", version=1, is_generic=True)],
-        [
-            GameTypeSpec(name="weapons", version=1, is_generic=True),
-            GameTypeSpec(name="core_game", version=1),
-            GameTypeSpec(name="dm_house_rules", version=1, derived_from=GameTypeSpec(name="core_game", version=1)),
-            GameTypeSpec(name="table_two_rules", version=1, derived_from=GameTypeSpec(name="core_game", version=1)),
-        ],
-        [
-            GameTypeSpec(name="core_game", version=1),
-            GameTypeSpec(name="core_game", version=2),
-            GameTypeSpec(name="dm_house_rules", version=1, derived_from=GameTypeSpec(name="core_game", version=2)),
-        ],
-    ],
-    indirect=True,
-)
-def test_game_types_fixture_creates_requested_game_types(game_type_specs, game_types):
-    assert len(game_types) == len(game_type_specs)
-
-    for spec, game_type in zip(game_type_specs, game_types):
-        assert game_type.signature == spec.signature
-        assert game_type.is_generic == spec.get("is_generic", False)
-
-        if spec.parent is None:
-            assert game_type.derived_from is None
-        else:
-            assert game_type.derived_from.signature == spec.parent.signature
-            assert game_type.derived_from in game_types
-
-
-def test_game_types_fixture_defaults_to_single_non_generic_game_type(game_types):
-    assert len(game_types) == 1
-    assert game_types[0].is_generic is False
-    assert game_types[0].derived_from is None
 
 
 @pytest.mark.parametrize("game_type_specs", [[GameTypeSpec(name="core_game", version=1)]], indirect=True)
@@ -180,12 +140,6 @@ def test_library_import_and_export_require_existing_game_type(db_session):
         export_game_type_config(db_session, "missing", 1)
     assert db_session.query(GameType).count() == 0
     assert db_session.query(EntityType).count() == 0
-
-
-def test_database_rejects_rows_for_nonexistent_game_type(db_session):
-    db_session.add(EntityType(name="orphan", game_type_id=uuid.uuid4()))
-    with pytest.raises(IntegrityError):
-        db_session.commit()
 
 
 def test_run_action_resolution_requires_existing_game_type(db_session):

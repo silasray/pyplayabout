@@ -1,4 +1,5 @@
 import json
+import uuid
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,9 @@ from sqlalchemy import delete, select, tuple_
 from app.config_import_export import import_game_type_config
 from app.database import Base, SessionLocal, engine
 from app.main import app
+from app.models import GameType
+
+from helpers import GameTypeSpec
 
 
 @pytest.fixture(autouse=True)
@@ -39,49 +43,64 @@ def _delete_rows(rows_by_table):
                 conn.execute(delete(table).where(tuple_(*table.primary_key.columns).in_([tuple(row) for row in rows])))
 
 
-def _game_type_spec(spec):
-    if isinstance(spec, str):
-        spec = {"name": spec}
-    payload = {
-        "name": spec["name"],
-        "version": spec.get("version", 1),
-        "is_generic": spec.get("is_generic", False),
-    }
-    derived_from = spec.get("derived_from")
-    if derived_from is not None:
-        if isinstance(derived_from, str):
-            derived_from = {"name": derived_from}
-        payload["derived_from"] = {"name": derived_from["name"], "version": derived_from.get("version", 1)}
-    return payload
+@pytest.fixture
+def db_session():
+    """A session for the test and the fixtures that set up its data.
+
+    The API commits through its own sessions, so objects this session already loaded can go
+    stale after an API call that changes them; call ``expire_all()`` before reading them again.
+    Fixtures roll this session back before their teardown touches the database.
+    """
+    with SessionLocal() as session:
+        yield session
+        session.rollback()
 
 
 @pytest.fixture
-def game_types(request):
-    """Create game types through the API and delete them through the API on teardown.
+def game_type_specs(request):
+    """The game type specs a test works with, without creating anything.
 
-    Parametrize indirectly with a list of specs, created in order. A spec is either a
-    game type name or a dict with ``name`` and optional ``version`` (default 1),
-    ``is_generic`` (default False) and ``derived_from`` (a name, or a dict with ``name``
-    and optional ``version``). A parent must appear earlier in the list than any game
-    type derived from it.
+    Parametrize indirectly with a list of ``GameTypeSpec`` objects; a ``derived_from`` must
+    also be a ``GameTypeSpec``. Specs are taken exactly as given, with no defaults filled in,
+    so they can describe data the API should reject. Tests where game type creation is in
+    scope use these directly; ``game_types`` creates them for tests where it is setup.
 
-    Yields the created game types as returned by the create endpoint, in spec order.
+    Defaults to a single ``test_game`` version 1 when not parametrized.
+    """
+    specs = getattr(request, "param", None) or [GameTypeSpec(name="test_game", version=1)]
+    for spec in specs:
+        if not isinstance(spec, GameTypeSpec):
+            raise TypeError(f"game_type_specs must be GameTypeSpec instances, got {spec!r}")
+        if spec.parent is not None and not isinstance(spec.parent, GameTypeSpec):
+            raise TypeError(f"derived_from must be a GameTypeSpec, got {spec.parent!r}")
+    return specs
+
+
+@pytest.fixture
+def game_types(game_type_specs, db_session):
+    """Create the ``game_type_specs`` game types through the API and delete them through the API on teardown.
+
+    Each spec's ``create_request`` is sent as is, in order, so a parent must appear earlier
+    in the list than any game type derived from it. Every creation must succeed; tests of
+    rejected creations use ``game_type_specs`` directly.
+
+    Yields the created game types as ``GameType`` objects loaded in ``db_session``, in spec order.
     Teardown deletes them in reverse order and asserts every table holds exactly the
     rows it held before setup.
     """
-    specs = getattr(request, "param", None) or ["test_game"]
     client = TestClient(app)
     rows_before = _table_primary_keys()
 
     created = []
     try:
-        for spec in specs:
-            response = client.post("/api/v1/game-types", json=_game_type_spec(spec))
+        for spec in game_type_specs:
+            response = client.post("/api/v1/game-types", json=spec.create_request)
             assert response.status_code == 201, f"Failed to create game type {spec}: {response.text}"
             created.append(response.json())
 
-        yield created
+        yield [db_session.get(GameType, uuid.UUID(game_type["id"])) for game_type in created]
     finally:
+        db_session.rollback()
         failures = []
         for game_type in reversed(created):
             # A test may have deleted the game type itself, or deprecated it, which changes the address it is deleted through.
@@ -100,10 +119,10 @@ def game_types(request):
 
 
 @pytest.fixture
-def bulk_game_type_bundle(request, game_types):
+def bulk_game_type_bundle(request, game_types, db_session):
     """Import config bundles into game types that the ``game_types`` fixture created.
 
-    Parametrize indirectly with one or more bundle paths, together with ``game_types`` specs
+    Parametrize indirectly with one or more bundle paths, together with ``game_type_specs``
     for every game type the bundles target. Each bundle's ``game_type`` block names the
     existing game type (``name`` and ``version``) it is imported into. This fixture never
     creates or deletes game types.
@@ -125,21 +144,21 @@ def bulk_game_type_bundle(request, game_types):
     rows_before = _table_primary_keys()
     rows_added = {}
     try:
-        with SessionLocal() as session:
-            for payload in bundles:
-                target = payload["game_type"]
-                import_game_type_config(session, target["name"], target["version"], payload)
-            session.commit()
+        for payload in bundles:
+            target = payload["game_type"]
+            import_game_type_config(db_session, target["name"], target["version"], payload)
+        db_session.commit()
         rows_added = _rows_added_since(rows_before)
 
         yield bundles
     finally:
+        db_session.rollback()
         _delete_rows(rows_added)
         assert _table_primary_keys() == rows_before, "bulk_game_type_bundle teardown did not restore the database to its pre-import state"
 
 
 @pytest.fixture
-def test_body_rows(request):
+def test_body_rows(request, db_session):
     """Delete every row the test body creates, and only those rows.
 
     Snapshots the database once the test's other setup fixtures (``game_types`` and
@@ -155,5 +174,6 @@ def test_body_rows(request):
     try:
         yield
     finally:
+        db_session.rollback()
         _delete_rows(_rows_added_since(rows_before))
         assert _table_primary_keys() == rows_before, "test_body_rows teardown did not restore the database to its pre-test state"

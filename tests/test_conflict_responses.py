@@ -3,17 +3,18 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.database import SessionLocal
 from app.main import app
-from app.models import EntityType, GameType
+from app.models import EntityType
+
+from helpers import GameTypeSpec
 
 client = TestClient(app)
 
-GENERIC = {"name": "test_generic_game_type", "version": 1}
-TARGET = {"name": "test_game_type", "version": 1}
+GENERIC = GameTypeSpec(name="test_generic_game_type", version=1, is_generic=True)
+TARGET = GameTypeSpec(name="test_game_type", version=1)
 EQUIP_SETUP = pytest.mark.parametrize(
-    "game_types, bulk_game_type_bundle",
-    [pytest.param([{**GENERIC, "is_generic": True}, TARGET], ["tests/fixtures/bulk_game_types/equip_generic_bundle.json"], id="equip")],
+    "game_type_specs, bulk_game_type_bundle",
+    [pytest.param([GENERIC, TARGET], ["tests/fixtures/bulk_game_types/equip_generic_bundle.json"], id="equip")],
     indirect=True,
 )
 
@@ -26,28 +27,30 @@ def _by_kind_and_name(blocking_resources):
     return {(item["kind"], item.get("name")): item for item in blocking_resources}
 
 
-@pytest.mark.parametrize("game_types", [["core_game"]], indirect=True)
-def test_create_duplicate_game_type_lists_the_existing_game_type(game_types):
-    response = client.post("/api/v1/game-types", json={"name": "core_game", "version": 1})
+@pytest.mark.parametrize("game_type_specs", [[GameTypeSpec(name="core_game", version=1)]], indirect=True)
+def test_create_duplicate_game_type_lists_the_existing_game_type(game_type_specs, game_types):
+    response = client.post("/api/v1/game-types", json=game_type_specs[0].create_request)
 
     assert response.status_code == 409
     body = response.json()
     assert body["warning_type"] == "game_type_exists"
     [existing] = body["blocking_resources"]
     assert existing["kind"] == "game_type"
-    assert existing["id"] == game_types[0]["id"]
+    assert existing["id"] == str(game_types[0].id)
     assert existing["name"] == "core_game"
     assert existing["fields"]["version"] == 1
     assert existing["reason"]
 
 
-def test_delete_game_type_lists_every_config_resource_still_under_it():
-    for payload in ({"name": "core_game", "version": 1}, {"name": "dm_house_rules", "version": 1, "derived_from": {"name": "core_game", "version": 1}}):
-        assert client.post("/api/v1/game-types", json=payload).status_code == 201
-    with SessionLocal() as session:
-        core_game = session.query(GameType).filter_by(name="core_game").one()
-        session.add_all([EntityType(name="sword", game_type_id=core_game.id), EntityType(name="orc", game_type_id=core_game.id)])
-        session.commit()
+@pytest.mark.parametrize(
+    "game_type_specs",
+    [[GameTypeSpec(name="core_game", version=1), GameTypeSpec(name="dm_house_rules", version=1, derived_from=GameTypeSpec(name="core_game", version=1))]],
+    indirect=True,
+)
+def test_delete_game_type_lists_every_config_resource_still_under_it(game_types, test_body_rows, db_session):
+    core_game, _ = game_types
+    db_session.add_all([EntityType(name="sword", game_type_id=core_game.id), EntityType(name="orc", game_type_id=core_game.id)])
+    db_session.commit()
 
     response = client.delete("/api/v1/game-types/core_game/versions/1")
 
@@ -62,9 +65,10 @@ def test_delete_game_type_lists_every_config_resource_still_under_it():
     assert body["details"]["references"] == {"entity_type.game_type_id": 2}
 
 
-@pytest.mark.parametrize("game_types", [["weapons", {"name": "core_game", "derived_from": "weapons"}]], indirect=True)
-def test_create_derived_from_derived_game_type_lists_the_ancestry(game_types):
-    response = client.post("/api/v1/game-types", json={"name": "dm_house_rules", "version": 1, "derived_from": {"name": "core_game", "version": 1}})
+@pytest.mark.parametrize("game_type_specs", [[GameTypeSpec(name="weapons", version=1), GameTypeSpec(name="core_game", version=1, derived_from=GameTypeSpec(name="weapons", version=1))]], indirect=True)
+def test_create_derived_from_derived_game_type_lists_the_ancestry(game_type_specs, game_types):
+    _, core_game = game_type_specs
+    response = client.post("/api/v1/game-types", json=GameTypeSpec(name="dm_house_rules", version=1, derived_from=core_game).create_request)
 
     assert response.status_code == 409
     body = response.json()

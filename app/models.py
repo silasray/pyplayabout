@@ -120,6 +120,11 @@ class GameType(Base):
     def is_deprecated(self) -> bool:
         return self.deprecated_at is not None
 
+    @property
+    def signature(self) -> dict:
+        """The name and version that address this game type in API requests."""
+        return {"name": self.name, "version": self.version}
+
 
 class GameTypeResourceChange(Base):
     __tablename__ = "game_type_resource_change"
